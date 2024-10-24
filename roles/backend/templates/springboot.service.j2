@@ -1,0 +1,15 @@
+[Unit]
+Description=springboot-sample
+After=syslog.target network.target
+
+[Service]
+User=cloudacademy
+Group=cloudacademy
+WorkingDirectory=/opt/cloudacademy
+ExecStart=/usr/bin/java -jar /opt/cloudacademy/springboot-sample.jar --logging.config=/opt/cloudacademy/springboot-sample.logback.xml
+ExecStop=/bin/kill -15 $MAINPID
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

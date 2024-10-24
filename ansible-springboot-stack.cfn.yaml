@@ -1,0 +1,150 @@
+Parameters:
+
+  AccountName:
+    Type: String
+    Default: cloudacademy
+  AccountCode:
+    Type: String
+    Default: a
+  RegionCode:
+    Type: String
+    Default: ew1
+  Environment:
+    Type: String
+    Default: training
+  Project:
+    Type: String
+    Default: cloudacademy
+  Application:
+    Type: String
+    Default: springboot-todo
+  SsmPublicHostedZoneIdKey:
+    Type: AWS::SSM::Parameter::Value<AWS::Route53::HostedZone::Id>
+    Default: /cloudacademy/cfn/route53/hostedzone/public/id
+  SsmVpcIdKey:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::VPC::Id>
+    Default: /cloudacademy/cfn/app/vpc/id
+  SsmSubnetsKey:
+    Type: AWS::SSM::Parameter::Value<List<AWS::EC2::Subnet::Id>>
+    Default: /cloudacademy/cfn/app/vpc/subnet/public/ids
+  SsmAppAmiIdKey:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+  AppInstanceType:
+    Type: String
+    Default: t3a.small
+  Username:
+    Type: String
+
+Resources:
+
+  AppRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${Project}-${Application}-${Username}-ec2-role
+      Path: /
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEC2ReadOnlyAccess
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM
+      Policies:
+        - PolicyName: !Sub ${Project}-${Application}-ec2-role-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: codecommit:GitPull
+                Resource: !Sub arn:aws:codecommit:eu-west-1:${AWS::AccountId}:ansible-playbook-springboot-foloruda
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
+                Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:*
+
+  AppInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub ${Project}-${Application}-${Username}-instance-profile
+      Path: /
+      Roles:
+        - !Ref AppRole
+
+  AppSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ${AccountCode}-${RegionCode}-${Project}-${Application}-${Username}
+      GroupDescription: Allows access to the App
+      VpcId: !Ref SsmVpcIdKey
+      SecurityGroupIngress:
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          Description: Allow Connection from the world
+      Tags:
+        - Key: Name
+          Value: !Sub ${AccountCode}-${RegionCode}-${Project}-${Application}-${Username}
+
+  AppLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        IamInstanceProfile:
+          Arn: !GetAtt AppInstanceProfile.Arn
+        ImageId: !Ref SsmAppAmiIdKey
+        InstanceType: !Ref AppInstanceType
+        TagSpecifications:
+          - ResourceType: volume
+            Tags:
+              - Key: Name
+                Value: !Sub ${AccountCode}-${RegionCode}-${Project}-${Application}-${Username}-volume
+              - Key: Application
+                Value: !Ref Application
+              - Key: Environment
+                Value: !Ref Environment
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash -xe
+            echo "Here goes my provisioning"
+
+            dnf install -y python3.11
+            dnf install -y python3-pip
+            pip install ansible
+            pip install boto3 git-remote-codecommit
+            yum install git -y
+            mkdir /opt/cloudacademy
+            mkdir /var/log/cloudacademy
+            git clone codecommit::eu-west-1://ansible-playbook-springboot-foloruda /root/asbpb-springboot && cd /root/asbpb-springboot
+            ansible-playbook main.yaml
+            
+  AppInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref AppLaunchTemplate
+        Version: !GetAtt AppLaunchTemplate.LatestVersionNumber
+      NetworkInterfaces:
+        - DeviceIndex: 0
+          SubnetId: !Select [0, !Ref SsmSubnetsKey ]
+          AssociatePublicIpAddress: true
+          GroupSet:
+            - !Ref AppSecurityGroup
+
+  DnsRecords:
+    Type: AWS::Route53::RecordSetGroup
+    Properties:
+      HostedZoneId: !Ref SsmPublicHostedZoneIdKey
+      RecordSets:
+        - Name: !Sub ${Username}.cloudacademy.spikeseed.ninja
+          Type: A
+          TTL: 300
+          ResourceRecords:
+            - !GetAtt AppInstance.PublicIp

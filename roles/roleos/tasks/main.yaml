@@ -1,0 +1,39 @@
+---
+# Update the system and install required packages
+- name: Update the system
+  dnf:
+    name: "*"
+    state: latest
+  when: ansible_os_family == "RedHat"
+
+- name: Install required packages
+  dnf:
+    name:
+      - java-11-amazon-corretto
+      - rsyslog
+      - amazon-cloudwatch-agent
+    state: present
+
+# Set timezone to Europe/Luxembourg
+- name: Set timezone to Europe/Luxembourg
+  timezone:
+    name: Europe/Luxembourg
+
+# Ensure rsyslog is enabled and started
+- name: Enable and start rsyslog
+  systemd:
+    name: rsyslog
+    state: started
+    enabled: true
+
+# Configure CloudWatch agent
+- name: Configure CloudWatch agent
+  template:
+    src: cloudwatch-config.json.j2
+    dest: /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+
+- name: Restart CloudWatch agent
+  systemd:
+    name: amazon-cloudwatch-agent
+    state: restarted
+    enabled: true

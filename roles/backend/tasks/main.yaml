@@ -1,0 +1,67 @@
+---
+# Create Group
+- name: Ensure group 'cloudacademy' exists
+  ansible.builtin.group:
+    name: cloudacademy
+    state: present
+
+# Ensure the cloudacademy user exists
+- name: Create cloudacademy user
+  user:
+    name: cloudacademy
+    state: present
+    system: yes
+    create_home: yes
+    home: /opt/cloudacademy
+    group: cloudacademy
+    shell: /bin/bash
+    append: yes
+
+- name: Create application directory
+  file:
+    path: /opt/cloudacademy
+    state: directory
+    owner: cloudacademy
+    group: cloudacademy
+    mode: 0755
+
+- name: Create logs directory
+  file:
+    path: /var/log/cloudacademy
+    state: directory
+    owner: cloudacademy
+    group: cloudacademy
+    mode: 0755
+
+# Download Spring Boot JAR from S3
+- name: Download Spring Boot JAR from S3
+  aws_s3:
+    bucket: a-ew1-cloudacademy-assets
+    object: training/apps/springboot-sample.jar
+    dest: /opt/cloudacademy/springboot-sample.jar
+    mode: get
+
+# Download the logback configuration from S3
+- name: Download logback configuration
+  aws_s3:
+    bucket: a-ew1-cloudacademy-assets
+    object: training/apps/springboot-sample.logback.xml
+    dest: /opt/cloudacademy/springboot-sample.logback.xml
+    mode: get
+
+# Create systemd service for the Spring Boot application
+- name: Create Spring Boot systemd service
+  template:
+    src: springboot.service.j2
+    dest: /etc/systemd/system/springboot-sample.service
+    mode: '0644'
+
+- name: Reload systemd to recognize new service
+  systemd:
+    daemon_reload: yes
+
+- name: Enable and start Spring Boot service
+  systemd:
+    name: springboot-sample
+    state: started
+    enabled: true
